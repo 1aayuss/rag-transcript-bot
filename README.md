@@ -63,22 +63,6 @@ The application uses the following models and settings (configurable in `app.py`
   - `TOP_K = 4` (number of contexts to retrieve)
   - `MMR_DIVERSITY = 0.3` (diversity factor for MMR reranking)
 
-## 📁 Project Structure
-
-```
-python-bot/
-├── app.py              # Main Streamlit application
-├── ingest.py           # PDF ingestion and vector storage
-├── schemas.py          # Pydantic models for data validation
-├── requirements.txt    # Python dependencies
-├── .env.example       # Environment variables template
-├── README.md          # Project documentation
-└── data/              # Directory for PDF files
-    ├── 9sep.pdf
-    ├── 11sep.pdf
-    └── ...
-```
-
 ## 🚀 Usage
 
 ### 1. Data Ingestion
@@ -86,6 +70,7 @@ python-bot/
 First, add your PDF files to the `data/` directory, then run the ingestion script:
 
 ```bash
+cd src
 python ingest.py
 ```
 
@@ -101,6 +86,7 @@ This will:
 Start the Streamlit app:
 
 ```bash
+cd src
 streamlit run app.py
 ```
 
