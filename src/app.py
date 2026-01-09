@@ -25,10 +25,18 @@ def retrieve_ctx(
     client: QdrantClient,
     question: str,
     source_filter: Optional[str] = None,
+    timestamp_filter: Optional[str] = None,
+    date_filter: Optional[str] = None,
+    user_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Retrieve context using hybrid search (dense + sparse) with MMR reranking.
+    Supports filtering by source, timestamp, date, and user.
+    """
     dense_q = next(DENSE_MODEL.query_embed(question))
     sparse_q = next(SPARSE_MODEL.query_embed(question))
 
+    # Hybrid search prefetch
     prefetch = [
         models.Prefetch(query=dense_q, using="dense",
                         limit=max(10, TOP_K * 3)),
@@ -39,13 +47,26 @@ def retrieve_ctx(
         ),
     ]
 
-    qfilter = None
+    # Build filter conditions
+    filter_conditions = []
     if source_filter:
-        qfilter = models.Filter(
-            must=[models.FieldCondition(
-                key="source", match=models.MatchValue(value=source_filter))]
-        )
+        filter_conditions.append(models.FieldCondition(
+            key="source", match=models.MatchValue(value=source_filter)))
+    if timestamp_filter:
+        filter_conditions.append(models.FieldCondition(
+            key="timestamp", match=models.MatchValue(value=timestamp_filter)))
+    if date_filter:
+        filter_conditions.append(models.FieldCondition(
+            key="date", match=models.MatchValue(value=date_filter)))
+    if user_filter:
+        filter_conditions.append(models.FieldCondition(
+            key="user", match=models.MatchValue(value=user_filter)))
 
+    qfilter = None
+    if filter_conditions:
+        qfilter = models.Filter(must=filter_conditions)
+
+    # Query with MMR (Maximal Marginal Relevance) for diversity
     res = client.query_points(
         collection_name=COLLECTION_NAME,
         prefetch=prefetch,
@@ -99,9 +120,18 @@ def generate_res(
     for c in contexts:
         txt = str(c.get("text", "")).strip()
         src = str(c.get("source", "")).strip()
+        timestamp = str(c.get("timestamp", "")).strip()
+        user = str(c.get("user", "")).strip()
+        date = str(c.get("date", "")).strip()
         if txt:
             snippets.append(txt)
-            ctx_items.append(Context(text=txt[:400], source=src))
+            ctx_items.append(Context(
+                text=txt[:400],
+                source=src,
+                timestamp=timestamp if timestamp else None,
+                user=user if user else None,
+                date=date if date else None
+            ))
 
     structured_llm = llm.with_structured_output(RAGAnswer)
     rag: RAGAnswer = structured_llm.invoke(
@@ -132,32 +162,39 @@ def main():
     with st.sidebar:
         st.header("Settings")
         st.caption(f"Collection: `{COLLECTION_NAME}`")
-        data_files = [
-            "All",
-            "1sep.pdf",
-            "2sep.pdf",
-            "3sep.pdf",
-            "4sep.pdf",
-            "8sep.pdf",
-            "9sep.pdf",
-            "11sep.pdf"
-        ]
+
+        data_dir = "../data"
+        data_files = ["All"]
+        if os.path.exists(data_dir):
+            pdf_files = [
+                f for f in os.listdir(data_dir)
+                if f.lower().endswith(".pdf")
+            ]
+            data_files.extend(sorted(pdf_files))
+
         source_filter = st.selectbox("Filter by filename", data_files)
         if source_filter == "All":
             source_filter = ""
+
+        st.subheader("Advanced Filters")
+        date_filter = st.text_input("Filter by date (YYYY-MM-DD)", "")
+        user_filter = st.text_input("Filter by user", "")
+        timestamp_filter = st.text_input(
+            "Filter by timestamp (ISO format)", "")
 
     with st.form("question_form"):
         question = st.text_input("Ask a question")
         ask = st.form_submit_button("Generate")
 
-    print(question)
-    print(question.strip())
     if ask and question.strip():
-        with st.spinner("Retrieving…"):
+        with st.spinner("Retrieving with hybrid search + MMR…"):
             ctx = retrieve_ctx(
                 client=client,
                 question=question.strip(),
                 source_filter=source_filter.strip() or None,
+                date_filter=date_filter.strip() or None,
+                user_filter=user_filter.strip() or None,
+                timestamp_filter=timestamp_filter.strip() or None,
             )
 
         with st.spinner("Generating answer…"):
@@ -169,7 +206,12 @@ def main():
 
         st.subheader("Contexts")
         for i, c in enumerate(rag.contexts, 1):
-            st.markdown(f"**[{i}]** `{c.source}`")
+            metadata_parts = [f"`{c.source}`"]
+            if c.date:
+                metadata_parts.append(f"📅 {c.date}")
+            if c.user:
+                metadata_parts.append(f"👤 {c.user}")
+            st.markdown(f"**[{i}]** {' | '.join(metadata_parts)}")
             st.caption(c.text)
 
 
